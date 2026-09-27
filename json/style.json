@@ -3,7 +3,7 @@
 		"caskaydia-cove": "https://github.com/ryanoasis/nerd-fonts/raw/refs/heads/master/patched-fonts/CascadiaCode/CaskaydiaCoveNerdFontMono-Regular.ttf",
 		"fira-code": "https://github.com/ryanoasis/nerd-fonts/raw/master/patched-fonts/FiraCode/FiraCodeNerdFontMono-Regular.ttf",
 		"hack": "https://github.com/ryanoasis/nerd-fonts/raw/refs/heads/master/patched-fonts/Hack/HackNerdFontMono-Regular.ttf",
-    "iconsolata": "https://github.com/ryanoasis/nerd-fonts/raw/refs/heads/master/patched-fonts/Inconsolata/InconsolataNerdFont-Regular.ttf",
+    "inconsolata": "https://github.com/ryanoasis/nerd-fonts/raw/refs/heads/master/patched-fonts/Inconsolata/InconsolataNerdFont-Regular.ttf",
     "iosevka": "https://github.com/ryanoasis/nerd-fonts/raw/refs/heads/master/patched-fonts/Iosevka/IosevkaNerdFontMono-Regular.ttf",
     "ibm-plex-mono": "https://github.com/ryanoasis/nerd-fonts/raw/refs/heads/master/patched-fonts/IBMPlexMono/BlexMonoNerdFontMono-Regular.ttf",
     "iosevka-term": "https://github.com/ryanoasis/nerd-fonts/raw/refs/heads/master/patched-fonts/IosevkaTerm/IosevkaTermNerdFontMono-Regular.ttf",

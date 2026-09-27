@@ -24,15 +24,26 @@ PRUNER_DIRECTORY="$TERMUX_DIRECTORY/.pruner"
 THEMES_DIRECTORY="$PRUNER_DIRECTORY/themes"
 FONTS_DIRECTORY="$PRUNER_DIRECTORY/fonts"
 # ----
-# Colors
-BOLD=$(tput bold)
-CYAN_BOLD=$(tput setaf 6; tput bold)
 
-RESET=$(tput sgr0)
-RED=$(tput setaf 1)
-GREEN=$(tput setaf 2)
-YELLOW=$(tput setaf 3)
-CYAN=$(tput setaf 6)
+# Colors
+if command -v tput &>/dev/null; then
+  RED=$(tput setaf 1)
+  GREEN=$(tput setaf 2)
+  YELLOW=$(tput setaf 3)
+  CYAN=$(tput setaf 6)
+  BOLD=$(tput bold)
+  CYAN_BOLD=$(tput setaf 6; tput bold)
+  RESET=$(tput sgr0)
+else
+  RED=$'\033[0;31m'
+  GREEN=$'\033[0;32m'
+  YELLOW=$'\033[0;33m'
+  CYAN=$'\033[0;36m'
+  BOLD=$'\033[1m'
+  CYAN_BOLD=$'\033[1;36m'
+  RESET=$'\033[0m'
+fi
+
 # ----
 echoerr() {
 	printf "%s\n" "$@" >&2	
@@ -104,10 +115,19 @@ EOF
 	[[ -e "$target_file" ]] && echoerr "you already have it installed stupid"
 
   printf "Downloading %s%s%s\n" "$BOLD" "$filename" "$RESET"
-	if ! curl -# -fSLo "$target_file" "$download_sources"; then
+	if ! curl -# -fSL --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 -o "$target_file" "$download_sources"; then
 		echoerr "${RED}download error${RESET}: maybe the URL has been changed or deleted"
 	fi
-	
+
+  expected_sha="$(jq -r ".\"checksums\".\"$filename\"" "$json_file")"
+  if [[ -n "$expected_sha" && "$expected_sha" != "null" ]]; then
+    actual_sha="$(sha256sum "$target_file" | cut -d' ' -f1)"
+    if [[ "$actual_sha" != "$expected_sha" ]]; then
+      rm -f "$target_file"
+      echoerr "checksum mismatch for $filename: file may be corrupted or tampered with"
+    fi
+  fi
+
 	printf "%s%s%s %shas been downloaded successfully\n" "$BOLD" "$filename" "$RESET" "$GREEN"
 	return
 }
