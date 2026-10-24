@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/data/data/com.termux/files/usr/bin/env bash
 # Script name: pruner
 # Author: Y3rw1N
 # Created in Termux with Neovim
@@ -12,7 +12,7 @@ source "$(dirname "$0")/lib/reload-termux-config"
 
 json_file="$(find "$(dirname "$0")/" -maxdepth 2 -type f -name "style.json")"
 
-# CONST
+# Const
 SCRIPT_VERSION="1.0"
 
 TERMUX_DIRECTORY="$HOME/.termux"
@@ -26,15 +26,7 @@ FONTS_DIRECTORY="$PRUNER_DIRECTORY/fonts"
 # ----
 
 # Colors
-if command -v tput &>/dev/null; then
-  RED=$(tput setaf 1)
-  GREEN=$(tput setaf 2)
-  YELLOW=$(tput setaf 3)
-  CYAN=$(tput setaf 6)
-  BOLD=$(tput bold)
-  CYAN_BOLD=$(tput setaf 6; tput bold)
-  RESET=$(tput sgr0)
-else
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
   RED=$'\033[0;31m'
   GREEN=$'\033[0;32m'
   YELLOW=$'\033[0;33m'
@@ -42,25 +34,27 @@ else
   BOLD=$'\033[1m'
   CYAN_BOLD=$'\033[1;36m'
   RESET=$'\033[0m'
+else
+  RED='' GREEN='' YELLOW='' CYAN='' BOLD='' CYAN_BOLD='' RESET=''
 fi
 
 # ----
 echoerr() {
-	printf "%s\n" "$@" >&2	
-	exit 1
+  printf "%b\n" "$@" >&2
+  exit 1
 }
 
-if [[ "${OSTYPE:-}" != "linux-android" ]]; then
+if [[ -z "${TERMUX_VERSION:-}" && "${PREFIX:-}" != /data/data/com.termux/* ]]; then
   echoerr "[${YELLOW}!${RESET}] only for android OS with termux terminal installed"
 fi
 
-# CHECK FOR MISSING DEPENDENCIES
-for d in curl jq tput; do
+# Check for missing dependencies
+for d in curl jq; do
   [[ -z "$(command -v "$d")" ]] && echoerr "${d} dependency is not installed\nplease install the dependency for the script to work"
 done
 
 help_message() {
-	cat << EOF 
+  cat <<EOF
 usage: $0 [option] [theme OR font]
 global commands:
   install   Install themes or fonts
@@ -80,56 +74,81 @@ ensure_dir() {
   [[ -d "$dir" ]] || mkdir -p "$dir"
 }
 
-install_ft_files() {
-	local subcommand="${1:---help}"
-	local filename="${2:-}"
-	local download_sources target_file
+# only allow catalog-style names, so they can't escape the target directory
+validate_name() {
+  [[ "$1" =~ ^[a-z0-9-]+$ ]] || echoerr "invalid name: '$1'"
+}
 
-	case "$subcommand" in
-		-f | --font)
-			download_sources="$(jq -r ".\"fonts\".\"$filename\"" "$json_file")"		
-			target_file="$FONTS_DIRECTORY/$filename.ttf"
-			ensure_dir "$FONTS_DIRECTORY"
-			;;
-		-t | --theme)
-			download_sources="$(jq -r ".\"themes\".\"$filename\"" "$json_file")"
-			target_file="$THEMES_DIRECTORY/$filename.properties"
-			ensure_dir "$THEMES_DIRECTORY"
-			;;
-    --help)
-    cat<<EOF
+# Termux silently ignores broken fonts and half-applies broken themes,
+# so downloaded files are checked before they get installed
+is_valid_font() {
+  local magic
+  magic="$(head -c 4 "$1" | od -An -tx1 | tr -d ' \n')"
+  # TrueType (00010000 or "true") or OpenType ("OTTO")
+  [[ "$magic" == 00010000 || "$magic" == 74727565 || "$magic" == 4f54544f ]]
+}
+
+is_valid_theme() {
+  local keys='^[[:space:]]*(foreground|background|cursor|color[0-9]+)[[:space:]]*[=:]'
+  local invalid_lines
+  grep -qE "$keys" "$1" || return 1
+  # every line that isn't blank or a comment must be a known key
+  invalid_lines="$(grep -vE '^[[:space:]]*([#!].*)?$' "$1" | grep -cvE "$keys" || true)"
+  [[ "$invalid_lines" == 0 ]]
+}
+
+install_ft_files() {
+  local subcommand="${1:---help}"
+  local filename="${2:-}"
+  local download_sources target_file tmp_file validator
+
+  case "$subcommand" in
+  -f | --font)
+    download_sources="$(jq -r --arg n "$filename" '.fonts[$n]' "$json_file")"
+    target_file="$FONTS_DIRECTORY/$filename.ttf"
+    validator=is_valid_font
+    ensure_dir "$FONTS_DIRECTORY"
+    ;;
+  -t | --theme)
+    download_sources="$(jq -r --arg n "$filename" '.themes[$n]' "$json_file")"
+    target_file="$THEMES_DIRECTORY/$filename.properties"
+    validator=is_valid_theme
+    ensure_dir "$THEMES_DIRECTORY"
+    ;;
+  --help)
+    cat <<EOF
 You must specify what font or theme you must install:
   --font <font-name>   install a font
   --theme <theme-name>  install a theme
 You can only download fonts or themes that are available
 if you want to know write '$0 list' to find out the available fonts or themes
 EOF
-      return
-      ;;
-		*)
-			echoerr "invalid option: $subcommand"
-			;;
-	esac
+    return
+    ;;
+  *)
+    echoerr "invalid option: $subcommand"
+    ;;
+  esac
 
   [[ -z "$download_sources" || "$download_sources" == null ]] && echoerr "This font or theme is not registered"
-	[[ -e "$target_file" ]] && echoerr "you already have it installed stupid"
+  [[ -e "$target_file" ]] && echoerr "you already have it installed stupid"
 
   printf "Downloading %s%s%s\n" "$BOLD" "$filename" "$RESET"
-	if ! curl -# -fSL --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 -o "$target_file" "$download_sources"; then
-		echoerr "${RED}download error${RESET}: maybe the URL has been changed or deleted"
-	fi
-
-  expected_sha="$(jq -r ".\"checksums\".\"$filename\"" "$json_file")"
-  if [[ -n "$expected_sha" && "$expected_sha" != "null" ]]; then
-    actual_sha="$(sha256sum "$target_file" | cut -d' ' -f1)"
-    if [[ "$actual_sha" != "$expected_sha" ]]; then
-      rm -f "$target_file"
-      echoerr "checksum mismatch for $filename: file may be corrupted or tampered with"
-    fi
+  tmp_file="$(mktemp "${TMPDIR:-/tmp}/pruner.XXXXXX")"
+  if ! curl -# -fSL --proto '=https' --tlsv1.2 --connect-timeout 10 --max-time 60 -o "$tmp_file" "$download_sources"; then
+    rm -f "$tmp_file"
+    echoerr "${RED}download error${RESET}: maybe the URL has been changed or deleted"
   fi
 
-	printf "%s%s%s %shas been downloaded successfully\n" "$BOLD" "$filename" "$RESET" "$GREEN"
-	return
+  if ! "$validator" "$tmp_file"; then
+    rm -f "$tmp_file"
+    echoerr "${RED}invalid file${RESET}: the downloaded $filename is not a valid font or theme"
+  fi
+
+  mv "$tmp_file" "$target_file"
+
+  printf "%s%s%s %shas been downloaded successfully\n" "$BOLD" "$filename" "$RESET" "$GREEN"
+  return
 }
 
 list_ft() {
@@ -140,76 +159,72 @@ list_ft() {
   registred_fonts="$(jq -r '.["fonts"] | keys | .[]' "$json_file")"
   downloaded_themes="$(find "$THEMES_DIRECTORY" -type f -print0 2>/dev/null | xargs -0 -n 1 basename 2>/dev/null | sed 's/.properties$//' || true)"
   downloaded_fonts="$(find "$FONTS_DIRECTORY" -type f -print0 2>/dev/null | xargs -0 -n 1 basename 2>/dev/null | sed 's/.ttf$//' || true)"
-   
+
   case "$subcommand" in
-    -a | --all)
-      [[ -z "$registred_fonts" || -z "$registred_themes" ]] && echoerr "This font or theme is not registered"
-  
-      printf "fonts:\n"
-      for FONT in $registred_fonts
-      do
-        if printf "%s\n" "$downloaded_fonts" | grep -q "^$FONT$"; then
-          if cmp -s "$TERMUX_FONT_PATH" "$FONTS_DIRECTORY/$FONT.ttf"; then 
-            printf "< %s%s%s >\n" "$CYAN_BOLD" "$FONT" "$RESET"
-          else 
-            printf "  %s%s%s\n" "$CYAN" "$FONT" "$RESET"
-          fi
-          continue
-        fi
-        printf "  %s\n" "$FONT"
-      done 
+  -a | --all)
+    [[ -z "$registred_fonts" || -z "$registred_themes" ]] && echoerr "This font or theme is not registered"
 
-      printf "themes:\n"
-      for THEME in $registred_themes
-      do
-        if printf "%s\n" "$downloaded_themes" | grep -q "^$THEME$"; then
-          if cmp -s "$TERMUX_THEME_PATH" "$THEMES_DIRECTORY/$THEME.properties"; then 
-            printf "< %s%s%s >\n" "$CYAN_BOLD" "$THEME" "$RESET"
-          else 
-            printf "  %s%s%s\n" "$CYAN" "$THEME" "$RESET"
-          fi
-          continue 
+    printf "fonts:\n"
+    for FONT in $registred_fonts; do
+      if printf "%s\n" "$downloaded_fonts" | grep -q "^$FONT$"; then
+        if cmp -s "$TERMUX_FONT_PATH" "$FONTS_DIRECTORY/$FONT.ttf"; then
+          printf "< %s%s%s >\n" "$CYAN_BOLD" "$FONT" "$RESET"
+        else
+          printf "  %s%s%s\n" "$CYAN" "$FONT" "$RESET"
         fi
-        printf "  %s\n" "$THEME"
-      done
-      ;;
-    -f | --font)
-      [[ -z "$registred_fonts" ]] && echoerr "no registred fonts found"
-  
-      printf "fonts:\n"
-      for FONT in $registred_fonts
-      do
-        if printf "%s\n" "$downloaded_fonts" | grep -q "^$FONT$"; then
-          if cmp -s "$TERMUX_FONT_PATH" "$FONTS_DIRECTORY/$FONT.ttf"; then  
-            printf "< %s%s%s >\n" "$CYAN_BOLD" "$FONT" "$RESET"
-          else  
-            printf "  %s%s%s\n" "$CYAN" "$FONT" "$RESET"
-          fi
-          continue
-        fi 
-        printf "  %s\n" "$FONT"
-      done
-      ;;
-    -t | --theme)
-      [[ -z "$registred_themes" ]] && echoerr "no registred themes found"
+        continue
+      fi
+      printf "  %s\n" "$FONT"
+    done
 
-      printf "themes:\n"
-      for THEME in $registred_themes
-      do
-        if printf "%s\n" "$downloaded_themes" | grep -q "^$THEME$"; then
-          if cmp -s "$TERMUX_THEME_PATH" "$THEMES_DIRECTORY/$THEME.properties"; then 
-            printf "< %s%s%s >\n" "$CYAN_BOLD" "$THEME" "$RESET"
-          else  
-            printf "  %s%s%s\n" "$CYAN" "$THEME" "$RESET"
-          fi
-          continue 
-        fi 
-        printf "  %s\n" "$THEME"
-      done
-      ;;
-    *)
-      echoerr "$0: $1: invalid option"
-      ;;
+    printf "themes:\n"
+    for THEME in $registred_themes; do
+      if printf "%s\n" "$downloaded_themes" | grep -q "^$THEME$"; then
+        if cmp -s "$TERMUX_THEME_PATH" "$THEMES_DIRECTORY/$THEME.properties"; then
+          printf "< %s%s%s >\n" "$CYAN_BOLD" "$THEME" "$RESET"
+        else
+          printf "  %s%s%s\n" "$CYAN" "$THEME" "$RESET"
+        fi
+        continue
+      fi
+      printf "  %s\n" "$THEME"
+    done
+    ;;
+  -f | --font)
+    [[ -z "$registred_fonts" ]] && echoerr "no registred fonts found"
+
+    printf "fonts:\n"
+    for FONT in $registred_fonts; do
+      if printf "%s\n" "$downloaded_fonts" | grep -q "^$FONT$"; then
+        if cmp -s "$TERMUX_FONT_PATH" "$FONTS_DIRECTORY/$FONT.ttf"; then
+          printf "< %s%s%s >\n" "$CYAN_BOLD" "$FONT" "$RESET"
+        else
+          printf "  %s%s%s\n" "$CYAN" "$FONT" "$RESET"
+        fi
+        continue
+      fi
+      printf "  %s\n" "$FONT"
+    done
+    ;;
+  -t | --theme)
+    [[ -z "$registred_themes" ]] && echoerr "no registred themes found"
+
+    printf "themes:\n"
+    for THEME in $registred_themes; do
+      if printf "%s\n" "$downloaded_themes" | grep -q "^$THEME$"; then
+        if cmp -s "$TERMUX_THEME_PATH" "$THEMES_DIRECTORY/$THEME.properties"; then
+          printf "< %s%s%s >\n" "$CYAN_BOLD" "$THEME" "$RESET"
+        else
+          printf "  %s%s%s\n" "$CYAN" "$THEME" "$RESET"
+        fi
+        continue
+      fi
+      printf "  %s\n" "$THEME"
+    done
+    ;;
+  *)
+    echoerr "$0: $1: invalid option"
+    ;;
   esac
 }
 
@@ -217,46 +232,48 @@ remove_ft_files() {
   local subcommand="${1:-}"
   local filename="${2:-}"
 
-	case "$subcommand" in
-		-a | --all)
-			if [[ ! -d "$FONTS_DIRECTORY" || -z "$(ls -A "$FONTS_DIRECTORY")" ]] && \
-				[[ ! -d "$THEMES_DIRECTORY" || -z "$(ls -A "$THEMES_DIRECTORY")" ]]; then
-				echoerr "everything was already erased"
-			fi
-			rm -rf -- "${THEMES_DIRECTORY:?}"/* "${FONTS_DIRECTORY:?}"/*
-			printf "fonts and themes removed successfully\n"
-			return
-			;;
-		-f | --font)
-			if [[ ! -d "$FONTS_DIRECTORY" || -z "$(ls -A "$FONTS_DIRECTORY")" ]]; then
-				echoerr "no fonts to remove."
-			fi
+  case "$subcommand" in
+  -a | --all)
+    if [[ ! -d "$FONTS_DIRECTORY" || -z "$(ls -A "$FONTS_DIRECTORY")" ]] &&
+      [[ ! -d "$THEMES_DIRECTORY" || -z "$(ls -A "$THEMES_DIRECTORY")" ]]; then
+      echoerr "everything was already erased"
+    fi
+    rm -rf -- "${THEMES_DIRECTORY:?}"/* "${FONTS_DIRECTORY:?}"/*
+    printf "fonts and themes removed successfully\n"
+    return
+    ;;
+  -f | --font)
+    validate_name "$filename"
+    if [[ ! -d "$FONTS_DIRECTORY" || -z "$(ls -A "$FONTS_DIRECTORY")" ]]; then
+      echoerr "no fonts to remove."
+    fi
 
-			if [[ ! -f "${FONTS_DIRECTORY}/${filename}.ttf" ]]; then
-				echoerr "this font could not be found because it does not exist."
-			fi
+    if [[ ! -f "${FONTS_DIRECTORY}/${filename}.ttf" ]]; then
+      echoerr "this font could not be found because it does not exist."
+    fi
 
-			rm -f -- "${FONTS_DIRECTORY}/${filename}.ttf"
-			printf "font has been removed successfully\n"
-			return
-			;;
-		-t | --theme)
-			if [[ ! -d "$THEMES_DIRECTORY" || -z "$(ls -A "$THEMES_DIRECTORY")" ]]; then
-				echoerr "no themes to remove."
-			fi
+    rm -f -- "${FONTS_DIRECTORY}/${filename}.ttf"
+    printf "font has been removed successfully\n"
+    return
+    ;;
+  -t | --theme)
+    validate_name "$filename"
+    if [[ ! -d "$THEMES_DIRECTORY" || -z "$(ls -A "$THEMES_DIRECTORY")" ]]; then
+      echoerr "no themes to remove."
+    fi
 
-			if [[ ! -f "${THEMES_DIRECTORY}/${filename}.properties" ]]; then
-				echoerr "this color scheme could not be found because it does not exist"
-			fi
+    if [[ ! -f "${THEMES_DIRECTORY}/${filename}.properties" ]]; then
+      echoerr "this color scheme could not be found because it does not exist"
+    fi
 
-			rm -f -- "${THEMES_DIRECTORY}/${filename}.properties"
-			printf "the theme has been removed successfully\n"
-			return
-			;;
-		*)
-			echoerr "$0: $1: invalid option"
-			;;
-	esac
+    rm -f -- "${THEMES_DIRECTORY}/${filename}.properties"
+    printf "the theme has been removed successfully\n"
+    return
+    ;;
+  *)
+    echoerr "$0: $1: invalid option"
+    ;;
+  esac
 }
 
 set_ft() {
@@ -264,35 +281,35 @@ set_ft() {
   local filename="${2:-}"
 
   case "$subcommand" in
-    -f|--font)
-      if [[ "$filename" == "default" ]]; then
-        rm -f -- "$TERMUX_FONT_PATH"
-        reload_settings
-        printf "%sdone%s\n" "$GREEN" "$RESET"
-        return
-      fi
-      [[ ! -f "$FONTS_DIRECTORY/$filename.ttf" ]] && echoerr "${RED}error${RESET}: This font apparently does not exist"
-
-      cp "$FONTS_DIRECTORY/$filename.ttf" "$TERMUX_FONT_PATH"
+  -f | --font)
+    if [[ "$filename" == "default" ]]; then
+      rm -f -- "$TERMUX_FONT_PATH"
       reload_settings
-      printf "%s done\n" "$filename"
-      ;;
-    -t|--theme)
-      if [[ "$filename" == "default" ]]; then
-        rm "$TERMUX_THEME_PATH"
-        reload_settings
-        printf "%sdone%s\n" "$GREEN" "$RESET"
-        return
-      fi      
-      [[ ! -f "$THEMES_DIRECTORY/$filename.properties" ]] && echoerr "this theme '$filename' not exists"
+      printf "%sdone%s\n" "$GREEN" "$RESET"
+      return
+    fi
+    [[ ! -f "$FONTS_DIRECTORY/$filename.ttf" ]] && echoerr "${RED}error${RESET}: This font apparently does not exist"
 
-      cp "$THEMES_DIRECTORY/$filename.properties" "$TERMUX_THEME_PATH"
+    cp "$FONTS_DIRECTORY/$filename.ttf" "$TERMUX_FONT_PATH"
+    reload_settings
+    printf "%s done\n" "$filename"
+    ;;
+  -t | --theme)
+    if [[ "$filename" == "default" ]]; then
+      rm -f -- "$TERMUX_THEME_PATH"
       reload_settings
-      printf "%s done\n" "$filename"
-      ;;
-    *)
-      echoerr "$0: $1: invalid option"
-      ;;
+      printf "%sdone%s\n" "$GREEN" "$RESET"
+      return
+    fi
+    [[ ! -f "$THEMES_DIRECTORY/$filename.properties" ]] && echoerr "this theme '$filename' not exists"
+
+    cp "$THEMES_DIRECTORY/$filename.properties" "$TERMUX_THEME_PATH"
+    reload_settings
+    printf "%s done\n" "$filename"
+    ;;
+  *)
+    echoerr "$0: $1: invalid option"
+    ;;
   esac
 }
 
@@ -306,13 +323,13 @@ main() {
   fi
 
   case "$command" in
-	  in|install) install_ft_files "$subcommand" "$filename" ;;
-	  rem|remove) remove_ft_files "$subcommand" "$filename" ;;
-    list) list_ft "$subcommand" ;;
-    set) set_ft "$subcommand" "$filename" ;;
-    --version) printf "%s\n" "$SCRIPT_VERSION" ;;
-	  --help) help_message ;;
-	  *) echoerr "argument not found: $1\ntype '$0 --help' for more info" ;;
+  in | install) install_ft_files "$subcommand" "$filename" ;;
+  rem | remove) remove_ft_files "$subcommand" "$filename" ;;
+  list) list_ft "$subcommand" ;;
+  set) set_ft "$subcommand" "$filename" ;;
+  --version) printf "%s\n" "$SCRIPT_VERSION" ;;
+  --help) help_message ;;
+  *) echoerr "argument not found: $1\ntype '$0 --help' for more info" ;;
   esac
 }
 

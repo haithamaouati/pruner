@@ -1,4 +1,4 @@
-#!/data/data/com.termux/files/usr/bin/bash
+#!/usr/bin/env bash
 
 reload_settings() {
   loading_system() {
@@ -13,6 +13,8 @@ reload_settings() {
     done
     printf "\r\e[?25h"
   }
+  # restore the cursor even if the user interrupts the spinner
+  trap 'printf "\e[?25h"' EXIT
   (termux-reload-settings) &
   loading_system $!
   wait $!
