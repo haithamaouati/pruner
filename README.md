@@ -6,7 +6,11 @@ An `fzf`-powered, interactive fonts & themes manager for Termux wrapped in one B
 
 ## Screenshot
 
-![screenshot](screenshot.png)
+Options | Screenshots
+--- | ---
+Main menu | ![main_menu](.screenshots/main_menu.png)
+Themes menu | ![themes_menu](.screenshots/themes_menu.png)
+Fonts menu | ![fonts_menu](.screenshots/fonts_menu.png)
 
 ## Installation & Dependencies
 
